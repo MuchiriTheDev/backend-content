@@ -24,7 +24,7 @@ export const handleYouTubeCallback = async (req, res) => {
     }
 
     const query = user.onboarded ? 'dashboard' : 'onboard';
-    const redirectUrl = `http://localhost:5173/${query}?token=${token}`;
+    const redirectUrl = `${process.env.FRONTEND_URL}${query}?token=${token}`;
     console.log(`Redirecting to: ${redirectUrl}`);
     res.redirect(redirectUrl);
   } catch (error) {
