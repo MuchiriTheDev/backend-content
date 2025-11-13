@@ -1,0 +1,43 @@
+cci-backend/
+├── config/                  # Configuration files (e.g., database, environment)
+│   ├── db.js                # MongoDB connection setup
+│   └── config.js            # Environment variables (e.g., PORT, JWT_SECRET)
+├── models/                  # MongoDB schemas/models
+│   ├── User.js              # User schema (creators, admins)
+│   ├── Claim.js             # Claim schema (for payout requests)
+│   ├── Content.js           # Content schema (for review/risk analysis)
+│   └── Premium.js           # Premium schema (personalized pricing)
+├── routes/                  # API route definitions
+│   ├── auth.js              # Authentication routes (login, register)
+│   ├── claims.js            # Claims routes (submit, track, process)
+│   ├── content.js           # Content review routes
+│   └── premiums.js          # Premium calculation and payment routes
+├── controllers/             # Route handlers/logic
+│   ├── authController.js    # Auth logic (e.g., JWT generation)
+│   ├── claimController.js   # Claim processing logic
+│   ├── contentController.js # Content review and risk analysis logic
+│   ├── premiumController.js # Premium calculation logic
+├── services/                # Business logic and external integrations
+│   ├── aiService.js         # AI-driven risk assessment (e.g., content analysis)
+│   ├── paymentService.js    # Payment processing (e.g., for premiums)
+│   └── emailService.js      # Email notifications (e.g., claim approval)
+├── middleware/              # Custom middleware
+│   ├── auth.js              # JWT authentication middleware
+│   ├── errorHandler.js      # Global error handling
+│   └── validator.js         # Input validation (e.g., Joi or express-validator)
+├── utils/                   # Utility functions
+│   ├── logger.js            # Logging utility
+│   ├── constants.js         # App-wide constants (e.g., claim statuses)
+│   └── helpers.js           # Reusable helper functions
+├── tests/                   # Test files (for future testing)
+│   ├── auth.test.js         # Auth route tests
+│   ├── claims.test.js       # Claims route tests
+│   └── content.test.js      # Content route tests
+├── public/                  # Static files (if needed, e.g., claim evidence uploads)
+│   └── uploads/             # Uploaded files (e.g., content proofs)
+├── app.js                   # Express app setup (entry point)
+├── server.js                # Server startup (separates app from server)
+├── .env                     # Environment variables (not in version control)
+├── .gitignore               # Git ignore file
+├── package.json             # NPM dependencies and scripts
+└── README.md                # Project documentation
