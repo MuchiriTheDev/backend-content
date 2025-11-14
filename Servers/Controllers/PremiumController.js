@@ -10,20 +10,36 @@ import { sendVerificationEmail } from '../Services/EmailServices.js';
 // @access  Private (Creator/Admin)
 export const estimatePremium = async (req, res, next) => {
   try {
-    const userId = req.body.userId || req.user.id; // Allow admins to estimate for any user
+    const { userId: targetUserId } = req.body;
     const estimatorRole = req.user.role === 'Admin' ? 'Admin' : 'Creator';
-    const estimatorId = req.user.id;
+    const estimatorId = req.user.userId;
+
+    let userId;
+    if (!targetUserId) {
+      if (estimatorRole !== 'Admin') {
+        userId = req.user.userId;
+      } else {
+        return res.status(400).json({ success: false, error: 'User ID required for admin estimate' });
+      }
+    } else {
+      userId = targetUserId;
+    }
 
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
 
-    if (estimatorRole === 'Creator' && user._id.toString() !== req.user.id.toString()) {
+    if (estimatorRole === 'Creator' && user._id.toString() !== req.user.userId.toString()) {
       return res.status(403).json({ success: false, error: 'Creators can only estimate their own premium' });
     }
 
+    // Enhanced return to include factors and riskExplanation from schema
     const estimation = await Premium.estimatePremium(userId, estimatorRole, estimatorId);
+    const premium = await Premium.findOne({ 'premiumDetails.userId': userId });
+    const latestEstimation = premium?.estimationHistory?.creatorEstimations?.slice(-1)[0] || 
+                             premium?.estimationHistory?.adminEstimations?.slice(-1)[0] || 
+                             { factors: {}, riskExplanation: 'CCI Basic Estimate: 2-5% of earnings' };
 
     logger.info(
       `Premium estimated for user ${userId} by ${estimatorRole} ${estimatorId}: ${estimation.estimatedPercentage}% (KES ${estimation.estimatedAmount})`
@@ -33,12 +49,13 @@ export const estimatePremium = async (req, res, next) => {
       estimation: {
         estimatedPercentage: estimation.estimatedPercentage,
         estimatedAmount: estimation.estimatedAmount,
-        contentRisk: estimation.contentRisk,
-        riskExplanation: estimation.riskExplanation,
-        factors: estimation.factors,
+        contentRisk: latestEstimation.factors?.contentRiskPercentage || 0,
+        riskExplanation: latestEstimation.riskExplanation,
+        factors: latestEstimation.factors,
       },
     });
   } catch (error) {
+    console.log(error);
     logger.error(`Error in estimatePremium: ${error.message}, Stack: ${error.stack}`);
     res.status(500).json({ success: false, error: error.message });
   }
@@ -54,7 +71,7 @@ export const calculatePremium = async (req, res, next) => {
     }
 
     const { userId } = req.body;
-    const adminId = req.user.id;
+    const adminId = req.user.userId;
 
     const user = await User.findById(userId);
     if (!user || user.insuranceStatus.status !== 'Approved') {
@@ -63,11 +80,12 @@ export const calculatePremium = async (req, res, next) => {
 
     let premium = await Premium.findOne({ 'premiumDetails.userId': userId });
     if (!premium) {
+      // Align with schema defaults: basePercentage 2, finalAmount min 1000
       premium = new Premium({
         premiumDetails: {
           userId,
-          basePercentage: 5, // Default 5% base premium
-          currency: 'KES',
+          basePercentage: 2, // Align with schema default
+          currency: 'KSh',
           adjustmentFactors: {
             earningsPercentage: 0,
             audienceSizePercentage: 0,
@@ -75,8 +93,8 @@ export const calculatePremium = async (req, res, next) => {
             platformVolatility: 0,
             infractionPercentage: 0,
           },
-          finalPercentage: 5,
-          finalAmount: Math.max((5 / 100) * (user.financialInfo.monthlyEarnings || 0), 100), // Min KES 100
+          finalPercentage: 2,
+          finalAmount: Math.max((2 / 100) * (user.financialInfo.monthlyEarnings || 0), 1000), // Align min with schema
         },
         paymentStatus: { status: 'Pending' },
       });
@@ -85,7 +103,6 @@ export const calculatePremium = async (req, res, next) => {
     const result = await premium.recalculatePremium(adminId);
 
     user.financialInfo.premium = {
-      percentage: premium.premiumDetails.finalPercentage,
       amount: premium.premiumDetails.finalAmount,
       lastCalculated: new Date(),
       discountApplied: premium.premiumDetails.discount.percentage > 0,
@@ -96,7 +113,7 @@ export const calculatePremium = async (req, res, next) => {
     await sendEmail({
       to: user.personalInfo.email,
       subject: 'Your CCI Premium Calculated',
-      text: `Your monthly premium has been calculated: ${premium.premiumDetails.finalPercentage}% (KES ${premium.premiumDetails.finalAmount}) due by ${premium.paymentStatus.dueDate}. ${
+      text: `Your monthly premium has been calculated: ${premium.premiumDetails.finalPercentage}% (KSh ${premium.premiumDetails.finalAmount}) due by ${premium.paymentStatus.dueDate}. ${
         premium.premiumDetails.discount.preventiveServiceDiscount > 0
           ? `A ${premium.premiumDetails.discount.preventiveServiceDiscount}% discount was applied for content reviews.`
           : ''
@@ -104,14 +121,14 @@ export const calculatePremium = async (req, res, next) => {
     });
 
     logger.info(
-      `Premium calculated for user ${userId} by admin ${adminId}: ${premium.premiumDetails.finalPercentage}% (KES ${premium.premiumDetails.finalAmount})`
+      `Premium calculated for user ${userId} by admin ${adminId}: ${premium.premiumDetails.finalPercentage}% (KSh ${premium.premiumDetails.finalAmount})`
     );
     res.status(200).json({
       success: true,
       premium: {
         ...premium.premiumDetails,
-        contentRisk: result.contentRisk,
-        riskExplanation: result.riskExplanation,
+        contentRisk: result.factors?.contentRiskPercentage || 0, // Align with schema
+        riskExplanation: premium.premiumDetails.adjustmentFactors.riskExplanation,
       },
     });
   } catch (error) {
@@ -125,7 +142,7 @@ export const calculatePremium = async (req, res, next) => {
 // @access  Private (Creator)
 export const getMyPremium = async (req, res, next) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
     const premium = await Premium.findOne({ 'premiumDetails.userId': userId });
 
     if (!premium) {
@@ -145,7 +162,7 @@ export const getPremiumByUserId = async (req, res, next) => {
     if (!userId) {
       return res.status(400).json({ success: false, error: 'User ID is required' });
     }
-    const adminId = req.user.id;
+    const adminId = req.user.userId;
     if (req.user.role !== 'Admin') {
       return res.status(403).json({ success: false, error: 'Admin access required' });
     } 
@@ -170,7 +187,7 @@ export const getPremiumByUserId = async (req, res, next) => {
 // @access  Private (Creator)
 export const payPremium = async (req, res, next) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
     const { paymentMethod, paymentDetails } = req.body;
 
     if (!paymentMethod || !paymentDetails) {
@@ -201,7 +218,8 @@ export const payPremium = async (req, res, next) => {
     if (paymentSuccess) {
       premium.paymentStatus.status = 'Paid';
       premium.paymentStatus.paymentDate = new Date();
-      premium.paymentStatus.paymentMethod = { type: paymentMethod, details: paymentDetails };
+      premium.paymentStatus.paymentMethod.type = paymentMethod; // Align with schema: type is enum string
+      premium.paymentStatus.paymentMethod.details = paymentDetails; // details as string
       premium.paymentStatus.transactionId = transactionId;
       premium.paymentStatus.attempts.push({ status: 'Success', date: new Date() });
       premium.renewalCount += 1;
@@ -222,12 +240,12 @@ export const payPremium = async (req, res, next) => {
       to: user.personalInfo.email,
       subject: `CCI Premium Payment ${paymentSuccess ? 'Successful' : 'Failed'}`,
       text: paymentSuccess
-        ? `Your premium payment of ${premium.premiumDetails.finalPercentage}% (KES ${premium.premiumDetails.finalAmount}) was successful. Transaction ID: ${transactionId}.`
+        ? `Your premium payment of ${premium.premiumDetails.finalPercentage}% (KSh ${premium.premiumDetails.finalAmount}) was successful. Transaction ID: ${transactionId}.`
         : `Your premium payment attempt failed. Please try again or contact support.`,
     });
 
     logger.info(
-      `Premium payment ${paymentSuccess ? 'succeeded' : 'failed'} for user ${userId}: ${premium.premiumDetails.finalPercentage}% (KES ${premium.premiumDetails.finalAmount}), Transaction: ${transactionId}`
+      `Premium payment ${paymentSuccess ? 'succeeded' : 'failed'} for user ${userId}: ${premium.premiumDetails.finalPercentage}% (KSh ${premium.premiumDetails.finalAmount}), Transaction: ${transactionId}`
     );
     res.status(200).json({
       success: paymentSuccess,
@@ -245,7 +263,7 @@ export const payPremium = async (req, res, next) => {
 // @access  Private (Creator)
 export const applyContentReviewDiscount = async (req, res, next) => {
   try {
-    const userId = req.user.id;
+    const userId = req.user.userId;
 
     const premium = await Premium.findOne({ 'premiumDetails.userId': userId });
     if (!premium) {
@@ -262,18 +280,17 @@ export const applyContentReviewDiscount = async (req, res, next) => {
 
     const user = await User.findById(userId);
     user.financialInfo.premium.discountApplied = true;
-    user.financialInfo.premium.percentage = premium.premiumDetails.finalPercentage;
     user.financialInfo.premium.amount = premium.premiumDetails.finalAmount;
     await user.save();
 
     await sendEmail({
       to: user.personalInfo.email,
       subject: 'CCI Premium Discount Applied',
-      text: `A discount of ${premium.premiumDetails.discount.preventiveServiceDiscount}% has been applied to your premium for submitting content reviews. New premium: ${premium.premiumDetails.finalPercentage}% (KES ${premium.premiumDetails.finalAmount}).`,
+      text: `A discount of ${premium.premiumDetails.discount.preventiveServiceDiscount}% has been applied to your premium for submitting content reviews. New premium: ${premium.premiumDetails.finalPercentage}% (KSh ${premium.premiumDetails.finalAmount}).`,
     });
 
     logger.info(
-      `Content review discount applied for user ${userId}: ${premium.premiumDetails.discount.preventiveServiceDiscount}% (New amount: KES ${premium.premiumDetails.finalAmount})`
+      `Content review discount applied for user ${userId}: ${premium.premiumDetails.discount.preventiveServiceDiscount}% (New amount: KSh ${premium.premiumDetails.finalAmount})`
     );
     res.status(200).json({
       success: true,
@@ -292,7 +309,7 @@ export const adjustPremium = async (req, res, next) => {
   try {
     // Validate admin role
     if (req.user.role !== 'Admin') {
-      logger.error(`Unauthorized attempt to adjust premium by user ${req.user.id}`);
+      logger.error(`Unauthorized attempt to adjust premium by user ${req.user.userId}`);
       return res.status(403).json({ success: false, error: 'Admin access required' });
     }
 
@@ -320,25 +337,24 @@ export const adjustPremium = async (req, res, next) => {
     }
 
     // Adjust premium
-    const newFinalAmount = await premium.adjustPremium(adjustmentPercentage, reason, req.user.id);
+    const newFinalAmount = await premium.adjustPremium(adjustmentPercentage, reason, req.user.userId);
 
-    // Update user's financial info
-    user.financialInfo.premium.percentage = premium.premiumDetails.finalPercentage;
+    // Update user's financial info (align with schema: amount, not percentage directly)
     user.financialInfo.premium.amount = newFinalAmount;
     user.financialInfo.premium.lastCalculated = new Date();
     await user.save();
 
-    // Send notification email
+    // Send notification email (align with schema: fullName, currency KSh)
     try {
       await sendEmail({
         to: user.personalInfo.email,
         subject: 'CCI Premium Adjusted',
-        text: `Dear ${user.personalInfo.firstName},\n\nYour premium amount has been adjusted by ${adjustmentPercentage}% due to: ${reason}. New premium amount: KES ${newFinalAmount} (${premium.premiumDetails.finalPercentage.toFixed(2)}% of earnings).\n\nThank you for choosing CCI!`,
+        text: `Dear ${user.personalInfo.fullName},\n\nYour premium amount has been adjusted by ${adjustmentPercentage}% due to: ${reason}. New premium amount: KSh ${newFinalAmount} (${premium.premiumDetails.finalPercentage.toFixed(2)}% of earnings).\n\nThank you for choosing CCI!`,
         html: `
           <h2>CCI Premium Adjusted</h2>
-          <p>Dear ${user.personalInfo.firstName},</p>
+          <p>Dear ${user.personalInfo.fullName},</p>
           <p>Your premium amount has been adjusted by <strong>${adjustmentPercentage}%</strong> due to: ${reason}.</p>
-          <p><strong>New Premium Amount:</strong> KES ${newFinalAmount} (${premium.premiumDetails.finalPercentage.toFixed(2)}% of earnings)</p>
+          <p><strong>New Premium Amount:</strong> KSh ${newFinalAmount} (${premium.premiumDetails.finalPercentage.toFixed(2)}% of earnings)</p>
           <p>Thank you for choosing CCI!</p>
         `,
       });
@@ -348,7 +364,7 @@ export const adjustPremium = async (req, res, next) => {
     }
 
     logger.info(
-      `Premium ${id} adjusted for user ${premium.premiumDetails.userId} by admin ${req.user.id}: ${adjustmentPercentage}% (New amount: KES ${newFinalAmount}, ${premium.premiumDetails.finalPercentage.toFixed(2)}%)`
+      `Premium ${id} adjusted for user ${premium.premiumDetails.userId} by admin ${req.user.userId}: ${adjustmentPercentage}% (New amount: KSh ${newFinalAmount}, ${premium.premiumDetails.finalPercentage.toFixed(2)}%)`
     );
     res.status(200).json({
       success: true,
@@ -381,7 +397,7 @@ export const getAllPremiums = async (req, res, next) => {
     }
 
     const premiums = await Premium.find(query)
-      .populate('premiumDetails.userId', 'personalInfo.email personalInfo.firstName personalInfo.lastName')
+      .populate('premiumDetails.userId', 'personalInfo.email personalInfo.fullName') // Align with schema: fullName
       .sort({ 'paymentStatus.dueDate': 1 });
 
     res.status(200).json({ success: true, premiums });
@@ -405,7 +421,7 @@ export const getOverduePremiums = async (req, res, next) => {
       'paymentStatus.status': { $in: ['Pending', 'Failed'] },
       'paymentStatus.dueDate': { $lt: now },
     })
-      .populate('premiumDetails.userId', 'personalInfo.email personalInfo.firstName personalInfo.lastName')
+      .populate('premiumDetails.userId', 'personalInfo.email personalInfo.fullName') // Align with schema: fullName
       .sort({ 'paymentStatus.dueDate': 1 });
 
     for (const premium of premiums) {
@@ -421,7 +437,7 @@ export const getOverduePremiums = async (req, res, next) => {
         // await sendEmail({
         //   to: user.personalInfo.email,
         //   subject: 'CCI Overdue Premium Payment',
-        //   text: `Your premium of ${premium.premiumDetails.finalPercentage}% (KES ${premium.premiumDetails.finalAmount}) is overdue since ${premium.paymentStatus.dueDate}. Please pay immediately to avoid service interruption.`,
+        //   text: `Your premium of ${premium.premiumDetails.finalPercentage}% (KSh ${premium.premiumDetails.finalAmount}) is overdue since ${premium.paymentStatus.dueDate}. Please pay immediately to avoid service interruption.`,
         // });
       }
     }
@@ -439,10 +455,21 @@ export const getOverduePremiums = async (req, res, next) => {
 // @access  Private (Creator/Admin)
 export const retryPayment = async (req, res, next) => {
   try {
-    const userId = req.body.userId || req.user.id; // Allow admins to retry for any user
+    const { userId: targetUserId } = req.body;
     const isAdmin = req.user.role === 'Admin';
 
-    if (!isAdmin && userId !== req.user.id) {
+    let userId;
+    if (!targetUserId) {
+      if (!isAdmin) {
+        userId = req.user.userId;
+      } else {
+        return res.status(400).json({ success: false, error: 'User ID required for admin retry' });
+      }
+    } else {
+      userId = targetUserId;
+    }
+
+    if (!isAdmin && userId !== req.user.userId) {
       return res.status(403).json({ success: false, error: 'Creators can only retry their own payments' });
     }
 
@@ -482,12 +509,12 @@ export const retryPayment = async (req, res, next) => {
       to: user.personalInfo.email,
       subject: `CCI Premium Payment Retry ${paymentSuccess ? 'Successful' : 'Failed'}`,
       text: paymentSuccess
-        ? `Your premium payment retry of ${premium.premiumDetails.finalPercentage}% (KES ${premium.premiumDetails.finalAmount}) was successful. Transaction ID: ${transactionId}.`
+        ? `Your premium payment retry of ${premium.premiumDetails.finalPercentage}% (KSh ${premium.premiumDetails.finalAmount}) was successful. Transaction ID: ${transactionId}.`
         : `Your premium payment retry failed. Please try again or contact support.`,
     });
 
     logger.info(
-      `Premium payment retry ${paymentSuccess ? 'succeeded' : 'failed'} for user ${userId}: ${premium.premiumDetails.finalPercentage}% (KES ${premium.premiumDetails.finalAmount}), Transaction: ${transactionId}`
+      `Premium payment retry ${paymentSuccess ? 'succeeded' : 'failed'} for user ${userId}: ${premium.premiumDetails.finalPercentage}% (KSh ${premium.premiumDetails.finalAmount}), Transaction: ${transactionId}`
     );
     res.status(200).json({
       success: paymentSuccess,
@@ -507,7 +534,7 @@ export const retryPayment = async (req, res, next) => {
 export const getPremiumAnalytics = async (req, res, next) => {
   try {
     if (req.user.role !== 'Admin') {
-      logger.error(`Unauthorized analytics access by user ${req.user.id}`);
+      logger.error(`Unauthorized analytics access by user ${req.user.userId}`);
       return res.status(403).json({ success: false, error: 'Admin access required' });
     }
 
@@ -559,6 +586,7 @@ export const getPremiumAnalytics = async (req, res, next) => {
         },
       },
     ]);
+    // Align platformPremiums aggregate with schema: handle youtube and otherPlatforms
     const platformPremiums = await Premium.aggregate([
       { $match: match },
       {
@@ -570,30 +598,43 @@ export const getPremiumAnalytics = async (req, res, next) => {
         },
       },
       { $unwind: '$user' },
-      { $unwind: '$user.platformInfo.platforms' },
+      // Add youtube as a platform
+      {
+        $addFields: {
+          platforms: [
+            {
+              name: 'YouTube',
+              totalAmount: '$premiumDetails.finalAmount',
+              count: 1,
+              avgPercentage: '$premiumDetails.finalPercentage'
+            },
+            ...'$user.platformInfo.otherPlatforms'
+          ]
+        }
+      },
+      { $unwind: '$platforms' },
+      { $replaceRoot: { newRoot: { $mergeObjects: [ '$platforms', { totalAmount: '$premiumDetails.finalAmount', count: 1, avgPercentage: '$premiumDetails.finalPercentage' } ] } } },
       {
         $group: {
-          _id: '$user.platformInfo.platforms.name',
-          totalAmount: { $sum: '$premiumDetails.finalAmount' },
+          _id: '$name',
+          totalAmount: { $sum: '$totalAmount' },
           count: { $sum: 1 },
-          avgPercentage: { $avg: '$premiumDetails.finalPercentage' },
+          avgPercentage: { $avg: '$avgPercentage' },
         },
       },
     ]);
 
-    // AI-driven insights
+    // AI-driven insights (fix model name)
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: process.env.MODEL_GEMINI
-      
-     });
+    const model = genAI.getGenerativeModel({ model: process.env.MODEL_GEMINI || 'gemini-1.5-flash' });
     const prompt = `
       You are an AI assistant for Content Creators Insurance (CCI). Analyze the following premium analytics data and provide actionable insights to optimize payment compliance, premium pricing, discount strategies, and risk management. Focus on trends, platform-specific impacts, and revenue opportunities.
 
       **Analytics Data**:
       - Total Premiums: ${totalPremiums}
       - Status Breakdown: ${JSON.stringify(statusBreakdown)}
-      - Average Premium: ${avgPremium[0]?.avgPercentage?.toFixed(2) || 0}% (KES ${avgPremium[0]?.avgAmount?.toFixed(2) || 0})
-      - Total Revenue (KES): ${totalRevenue[0]?.total?.toFixed(2) || 0}
+      - Average Premium: ${avgPremium[0]?.avgPercentage?.toFixed(2) || 0}% (KSh ${avgPremium[0]?.avgAmount?.toFixed(2) || 0})
+      - Total Revenue (KSh): ${totalRevenue[0]?.total?.toFixed(2) || 0}
       - Total Discount Impact (%): ${discountImpact[0]?.totalDiscount?.toFixed(2) || 0}
       - Overdue Premiums: ${overdueCount}
       - Retry Success Rate: ${retrySuccessRate[0]?.successfulAttempts || 0}/${retrySuccessRate[0]?.totalAttempts || 0}
@@ -649,7 +690,7 @@ export const getPremiumAnalytics = async (req, res, next) => {
       };
     }
 
-    logger.info(`Admin ${req.user.id} retrieved premium analytics with ${aiInsights.insights.length} AI insights`);
+    logger.info(`Admin ${req.user.userId} retrieved premium analytics with ${aiInsights.insights.length} AI insights`);
     res.status(200).json({
       success: true,
       analytics: {

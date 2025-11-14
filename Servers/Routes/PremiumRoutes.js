@@ -17,9 +17,6 @@ import { adminMiddleware } from '../Middlewares/Admin.js';
 
 const premiumRouter = express.Router();
 
-// Middleware to restrict access to admins only
-
-
 // Creator Routes (Private)
 premiumRouter.post('/estimate', authMiddleware, estimatePremium);
 premiumRouter.get('/my-premium', authMiddleware, getMyPremium);
@@ -29,10 +26,10 @@ premiumRouter.post('/retry-payment', authMiddleware, retryPayment);
 
 // Admin Routes (Private)
 premiumRouter.post('/calculate', authMiddleware, adminMiddleware, calculatePremium);
-premiumRouter.get('/admin/all', authMiddleware, adminMiddleware, getAllPremiums);
+premiumRouter.get('/all', authMiddleware, adminMiddleware, getAllPremiums);
 premiumRouter.get('/overdue', authMiddleware, adminMiddleware, getOverduePremiums);
-premiumRouter.put('/admin/:id/adjust', authMiddleware, adminMiddleware, adjustPremium);
-premiumRouter.get('admin/:userId/premium', authMiddleware, adminMiddleware, getPremiumByUserId);
-premiumRouter.get('/admin/analytics', authMiddleware, adminMiddleware, getPremiumAnalytics);
+premiumRouter.put('/:id/adjust', authMiddleware, adminMiddleware, adjustPremium);
+premiumRouter.get('/admin/:userId', authMiddleware, adminMiddleware, getPremiumByUserId);
+premiumRouter.get('/analytics', authMiddleware, adminMiddleware, getPremiumAnalytics);
 
-export default premiumRouter; 
+export default premiumRouter;

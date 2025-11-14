@@ -38,7 +38,6 @@ export const bulkAdjustPremiums = async (req, res, next) => {
 
       try {
         const newFinalAmount = await premium.adjustPremium(adjustmentPercentage, reason, adminId);
-        user.financialInfo.premium.percentage = premium.premiumDetails.finalPercentage;
         user.financialInfo.premium.amount = newFinalAmount;
         user.financialInfo.premium.lastCalculated = new Date();
         await user.save();
@@ -46,8 +45,8 @@ export const bulkAdjustPremiums = async (req, res, next) => {
         await sendEmail({
           to: user.personalInfo.email,
           subject: 'CCI Premium Adjusted',
-          text: `Dear ${user.personalInfo.firstName},\n\nYour premium has been adjusted by ${adjustmentPercentage}% due to: ${reason}. New premium: KES ${newFinalAmount}.`,
-          html: `<p>Dear ${user.personalInfo.firstName},</p><p>Your premium has been adjusted by ${adjustmentPercentage}% due to: ${reason}. New premium: KES ${newFinalAmount}.</p>`,
+          text: `Dear ${user.personalInfo.fullName},\n\nYour premium has been adjusted by ${adjustmentPercentage}% due to: ${reason}. New premium: KSh ${newFinalAmount}.`,
+          html: `<p>Dear ${user.personalInfo.fullName},</p><p>Your premium has been adjusted by ${adjustmentPercentage}% due to: ${reason}. New premium: KSh ${newFinalAmount}.</p>`,
         });
 
         results.push({ premiumId, success: true, message: 'Premium adjusted successfully' });
@@ -104,12 +103,9 @@ export const sendPaymentReminders = async (req, res, next) => {
         await sendEmail({
           to: user.personalInfo.email,
           subject: 'CCI Premium Payment Reminder',
-          text: `Dear ${user.personalInfo.firstName},\n\nYour premium of KES ${premium.premiumDetails.finalAmount} is due by ${premium.paymentStatus.dueDate.toDateString()}. Please pay to maintain coverage.`,
-          html: `<p>Dear ${user.personalInfo.firstName},</p><p>Your premium of KES ${premium.premiumDetails.finalAmount} is due by ${premium.paymentStatus.dueDate.toDateString()}. Please pay to maintain coverage.</p>`,
+          text: `Dear ${user.personalInfo.fullName},\n\nYour premium of KSh ${premium.premiumDetails.finalAmount} is due by ${premium.paymentStatus.dueDate.toDateString()}. Please pay to maintain coverage.`,
+          html: `<p>Dear ${user.personalInfo.fullName},</p><p>Your premium of KSh ${premium.premiumDetails.finalAmount} is due by ${premium.paymentStatus.dueDate.toDateString()}. Please pay to maintain coverage.</p>`,
         });
-
-        premium.paymentStatus.remindersSent = (premium.paymentStatus.remindersSent || 0) + 1;
-        await premium.save();
 
         results.push({ premiumId, success: true, message: 'Payment reminder sent' });
       } catch (emailError) {
@@ -117,7 +113,7 @@ export const sendPaymentReminders = async (req, res, next) => {
       }
     }
 
-    loggerquery: logger.info(`Admin ${adminId} sent payment reminders for ${premiumIds.length} premiums`);
+    logger.info(`Admin ${adminId} sent payment reminders for ${premiumIds.length} premiums`);
     res.json({
       success: true,
       message: 'Payment reminders sent',
@@ -143,7 +139,7 @@ export const auditPremiumsWithAI = async (req, res, next) => {
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: proces.env.MODEL_GEMINI });
+    const model = genAI.getGenerativeModel({ model: process.env.MODEL_GEMINI || 'gemini-1.5-flash' });
 
     const results = [];
     for (const premiumId of premiumIds) {
@@ -159,18 +155,24 @@ export const auditPremiumsWithAI = async (req, res, next) => {
         continue;
       }
 
+      // Align platforms: youtube + otherPlatforms
+      const platformsData = [
+        { name: 'YouTube', audienceSize: user.platformInfo.youtube.audienceSize },
+        ...user.platformInfo.otherPlatforms.map(p => ({ name: p.name, audienceSize: p.audienceSize }))
+      ].filter(p => p.name).map(p => ({ name: p.name, audienceSize: p.audienceSize }));
+
       const prompt = `
         You are an AI assistant for Content Creators Insurance (CCI). Audit the following premium for fairness, anomalies, and optimization opportunities. Provide insights on premium pricing, payment compliance, and risk alignment.
 
         **Premium Data**:
         - User ID: ${premium.premiumDetails.userId}
         - Final Percentage: ${premium.premiumDetails.finalPercentage}%
-        - Final Amount: KES ${premium.premiumDetails.finalAmount}
-        - Monthly Earnings: KES ${user.financialInfo.monthlyEarnings}
+        - Final Amount: KSh ${premium.premiumDetails.finalAmount}
+        - Monthly Earnings: KSh ${user.financialInfo.monthlyEarnings}
         - Payment Status: ${premium.paymentStatus.status}
         - Discount Applied: ${premium.premiumDetails.discount.preventiveServiceDiscount}%
-        - Platform Count: ${user.platformInfo.platforms.length}
-        - Platforms: ${JSON.stringify(user.platformInfo.platforms.map(p => ({ name: p.name, audienceSize: p.audienceSize })))}
+        - Platform Count: ${platformsData.length}
+        - Platforms: ${JSON.stringify(platformsData)}
 
         **Instructions**:
         - Check if the premium is fair relative to earnings and risks.
@@ -256,9 +258,8 @@ export const getPremiumHistory = async (req, res, next) => {
     }
 
     const history = {
-      calculationHistory: premium.calculationHistory || [],
+      calculationHistory: premium.calculationHistory.calculations || [],
       paymentAttempts: premium.paymentStatus.attempts || [],
-      remindersSent: premium.paymentStatus.remindersSent || 0,
       lastRenewedAt: premium.lastRenewedAt,
       renewalCount: premium.renewalCount,
     };
@@ -278,8 +279,6 @@ export const getPremiumHistory = async (req, res, next) => {
     next(error);
   }
 };
-// ... existing imports (User, Premium, Claim, Content, GoogleGenerativeAI, Document, Table, etc.)
-// ... existing endpoints (bulkAdjustPremiums, sendPaymentReminders, auditPremiumsWithAI, getPremiumHistory)
 
 // @desc    Generate premium report with AI insights
 // @route   POST /api/admin/premiums/report
@@ -329,7 +328,7 @@ export const generatePremiumReport = async (req, res, next) => {
     const reportData = await Promise.all(
       premiums.map(async (premium) => {
         const user = await User.findById(premium.premiumDetails.userId)
-          .select('personalInfo.email personalInfo.firstName personalInfo.lastName platformInfo financialInfo')
+          .select('personalInfo.email personalInfo.fullName platformInfo financialInfo')
           .lean();
         const claims = await Claim.find({ 'claimDetails.userId': premium.premiumDetails.userId })
           .select('statusHistory claimDetails.incidentType evaluation')
@@ -338,16 +337,22 @@ export const generatePremiumReport = async (req, res, next) => {
           .select('riskAssessment.riskLevel contentDetails.platform')
           .lean();
 
+        // Align platforms: youtube + otherPlatforms
+        const platformsData = [
+          user?.platformInfo.youtube ? { name: 'YouTube', audienceSize: user.platformInfo.youtube.audienceSize } : null,
+          ...(user?.platformInfo.otherPlatforms || [])
+        ].filter(Boolean).map(p => p.name);
+
         // Filter platforms if specified
         const userPlatforms = platform
-          ? user?.platformInfo.platforms.filter((p) => p.name === platform).map((p) => p.name) || []
-          : user?.platformInfo.platforms.map((p) => p.name) || [];
+          ? platformsData.filter((p) => p === platform)
+          : platformsData;
 
         return {
           premiumId: premium._id,
           userId: premium.premiumDetails.userId,
           email: user?.personalInfo.email || 'N/A',
-          name: user ? `${user.personalInfo.firstName} ${user.personalInfo.lastName}` : 'N/A',
+          name: user?.personalInfo.fullName || 'N/A',
           paymentStatus: premium.paymentStatus.status,
           dueDate: premium.paymentStatus.dueDate?.toISOString() || 'N/A',
           paymentDate: premium.paymentStatus.paymentDate?.toISOString() || 'N/A',
@@ -370,12 +375,12 @@ export const generatePremiumReport = async (req, res, next) => {
 
     // Filter out premiums with no matching platforms if platform filter is applied
     const filteredReportData = platform
-      ? reportData.filter((data) => data.platforms.length > 0)
+      ? reportData.filter((data) => data.platforms.includes(platform))
       : reportData;
 
     // Generate AI insights
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: process.env.MODEL_GEMINI });
+    const model = genAI.getGenerativeModel({ model: process.env.MODEL_GEMINI || 'gemini-1.5-flash' });
     const aiInsights = await generatePremiumAiInsights(filteredReportData, model);
 
     // Determine metadata date range description
@@ -417,6 +422,9 @@ export const generatePremiumReport = async (req, res, next) => {
 
 // Helper function to generate AI insights for premium report
 async function generatePremiumAiInsights(reportData, model) {
+  // Collect unique platforms
+  const allPlatforms = [...new Set(reportData.flatMap((r) => r.platforms.split(', ').filter(Boolean)))];
+
   const prompt = `
     You are an AI assistant for Content Creators Insurance (CCI). Analyze the following premium report data and provide actionable insights to optimize premium pricing, improve payment compliance, reduce risks, and drive business growth.
 
@@ -425,8 +433,8 @@ async function generatePremiumAiInsights(reportData, model) {
     - Payment Status Breakdown: ${JSON.stringify(
       reportData.reduce((acc, r) => ({ ...acc, [r.paymentStatus]: (acc[r.paymentStatus] || 0) + 1 }), {})
     )}
-    - Platforms: ${JSON.stringify([...new Set(reportData.flatMap((r) => r.platforms.split(', ').filter(Boolean)))])}
-    - Total Premium Amount (KES): ${reportData.reduce((sum, r) => sum + r.finalAmount, 0).toFixed(2)}
+    - Platforms: ${JSON.stringify(allPlatforms)}
+    - Total Premium Amount (KSh): ${reportData.reduce((sum, r) => sum + r.finalAmount, 0).toFixed(2)}
     - Average Premium Percentage: ${(
       reportData.reduce((sum, r) => sum + r.finalPercentage, 0) / (reportData.length || 1)
     ).toFixed(2)}%
@@ -436,7 +444,7 @@ async function generatePremiumAiInsights(reportData, model) {
     - Approved Claims: ${reportData.reduce((sum, r) => sum + r.approvedClaims, 0)}
     - Total Content Reviews: ${reportData.reduce((sum, r) => sum + r.contentReviewCount, 0)}
     - High-Risk Content: ${reportData.reduce((sum, r) => sum + r.highRiskContentCount, 0)}
-    - Average Monthly Earnings (KES): ${(
+    - Average Monthly Earnings (KSh): ${(
       reportData.reduce((sum, r) => sum + r.monthlyEarnings, 0) / (reportData.length || 1)
     ).toFixed(2)}
 
@@ -503,13 +511,13 @@ async function createPremiumReportDocument(premiums, aiInsights, metadata) {
       new TableCell({ children: [new Paragraph(premium.paymentStatus)] }),
       new TableCell({ children: [new Paragraph(premium.dueDate)] }),
       new TableCell({ children: [new Paragraph(premium.paymentDate)] }),
-      new TableCell({ children: [new Paragraph(`KES ${premium.finalAmount.toFixed(2)}`)] }),
+      new TableCell({ children: [new Paragraph(`KSh ${premium.finalAmount.toFixed(2)}`)] }),
       new TableCell({ children: [new Paragraph(`${premium.finalPercentage.toFixed(2)}%`)] }),
       new TableCell({ children: [new Paragraph(`${premium.discountApplied}%`)] }),
       new TableCell({ children: [new Paragraph(premium.discountReason)] }),
       new TableCell({ children: [new Paragraph(premium.manualAdjustments.toString())] }),
       new TableCell({ children: [new Paragraph(premium.platforms)] }),
-      new TableCell({ children: [new Paragraph(`KES ${premium.monthlyEarnings.toFixed(2)}`)] }),
+      new TableCell({ children: [new Paragraph(`KSh ${premium.monthlyEarnings.toFixed(2)}`)] }),
       new TableCell({ children: [new Paragraph(premium.claimCount.toString())] }),
       new TableCell({ children: [new Paragraph(premium.approvedClaims.toString())] }),
       new TableCell({ children: [new Paragraph(premium.contentReviewCount.toString())] }),
@@ -590,7 +598,7 @@ async function createPremiumReportDocument(premiums, aiInsights, metadata) {
             spacing: { after: 50 },
           }),
           new Paragraph({
-            text: `Total Premium Amount: KES ${premiums
+            text: `Total Premium Amount: KSh ${premiums
               .reduce((sum, p) => sum + p.finalAmount, 0)
               .toFixed(2)}`,
             spacing: { after: 50 },
@@ -662,7 +670,7 @@ async function createPremiumReportDocument(premiums, aiInsights, metadata) {
                     width: { size: 1500, type: WidthType.DXA },
                   }),
                   new TableCell({
-                    children: [new Paragraph('Amount (KES)')],
+                    children: [new Paragraph('Amount (KSh)')],
                     width: { size: 1200, type: WidthType.DXA },
                   }),
                   new TableCell({
@@ -686,7 +694,7 @@ async function createPremiumReportDocument(premiums, aiInsights, metadata) {
                     width: { size: 1500, type: WidthType.DXA },
                   }),
                   new TableCell({
-                    children: [new Paragraph('Earnings (KES)')],
+                    children: [new Paragraph('Earnings (KSh)')],
                     width: { size: 1200, type: WidthType.DXA },
                   }),
                   new TableCell({

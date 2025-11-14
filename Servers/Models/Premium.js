@@ -161,8 +161,9 @@ premiumSchema.methods.checkContentReviewDiscount = async function () {
 premiumSchema.statics.estimatePremium = async function (userId, estimatorRole = 'Creator', estimatorId = null) {
   const user = await User.findById(userId);
   if (!user) throw new Error('User not found');
-  if (user.financialInfo.monthlyEarnings < 65000) {
-    return { eligible: false, message: 'Min KSh 65k/mo required' };
+  // DEMO: Lowered earnings threshold to 0
+  if (user.financialInfo.monthlyEarnings < 0) {
+    return { eligible: false, message: 'Min KSh 0/mo required' };
   }
   const basePercentage = 2;
   const finalPercentage = basePercentage;  // Stub: Enhance with factors/AI later
@@ -203,8 +204,8 @@ premiumSchema.statics.estimatePremium = async function (userId, estimatorRole = 
 // New Static: Create Premium from Insurance Application (Gated)
 premiumSchema.statics.createFromApplication = async function (userId) {
   const user = await User.findById(userId);
-  if (!user || user.financialInfo.monthlyEarnings < 65000) {
-    throw new Error('User ineligible: Min KSh 65k/mo earnings required for CCI');
+  if (!user || user.financialInfo.monthlyEarnings < 0) {
+    throw new Error('User ineligible: Min KSh 0/mo earnings required for CCI');
   }
   if (user.insuranceStatus.fraudScore < 70) {
     throw new Error('Fraud score too low for approval');

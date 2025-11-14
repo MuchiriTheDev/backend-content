@@ -100,14 +100,15 @@ analyticsSchema.methods.updateFromYouTube = async function (accessToken) {
       isResolved: false
     });
   }
-  if (this.youtube.metrics.estimateMonthlyEarnings < 65000) {  // CCI threshold
-    this.youtube.riskAlerts.push({
-      type: 'Low Engagement',
-      severity: 'Medium',
-      description: 'Earnings below CCI eligibility—optimize content for growth.',
-      isResolved: false
-    });
-  }
+  // DEMO: Removed low engagement alert for earnings <65000 to allow 0 threshold
+  // if (this.youtube.metrics.estimateMonthlyEarnings < 65000) {  // CCI threshold
+  //   this.youtube.riskAlerts.push({
+  //     type: 'Low Engagement',
+  //     severity: 'Medium',
+  //     description: 'Earnings below CCI eligibility—optimize content for growth.',
+  //     isResolved: false
+  //   });
+  // }
 
   // Trends: Volatility for premium (std dev of last 30 earnings)
   const last30 = this.youtube.metrics.earningsHistory.slice(-30).map(h => h.amount);

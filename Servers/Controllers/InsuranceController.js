@@ -59,7 +59,7 @@ export const applyForInsurance = async (req, res, next) => {
     let fraudScore = 0;
     try {
       // Stub: Random 0-100 for test (replace with real computation)
-      fraudScore = 10 || Math.floor(Math.random() * 101);  // 0-100
+      fraudScore = 70 || Math.floor(Math.random() * 101);  // 0-100
       logger.info(`Computed fraud score for user ${userId}: ${fraudScore}`);
 
       // TODO: Real fraud score (e.g., via Gemini AI or NDVS/M-Pesa match)

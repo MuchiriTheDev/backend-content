@@ -16,6 +16,6 @@ adminPremiumRouter.post('/bulk-adjust', authMiddleware, adminMiddleware, bulkAdj
 adminPremiumRouter.post('/reminders', authMiddleware, adminMiddleware, sendPaymentReminders);
 adminPremiumRouter.post('/audit', authMiddleware, adminMiddleware, auditPremiumsWithAI);
 adminPremiumRouter.get('/:id/history', authMiddleware, adminMiddleware, getPremiumHistory);
-adminPremiumRouter.post('/report', authMiddleware, adminMiddleware, generatePremiumReport)
+adminPremiumRouter.post('/report', authMiddleware, adminMiddleware, generatePremiumReport);
 
 export default adminPremiumRouter;

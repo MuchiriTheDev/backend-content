@@ -243,8 +243,9 @@ userSchema.methods.applyForInsurance = async function (nationalId = '') {
   if (!this.onboarded) {
     throw new Error('Complete onboarding first for analytics access');
   }
-  if (this.financialInfo.monthlyEarnings < 10) {  // ~$500/mo KSh
-    throw new Error('Monthly earnings must be at least KSh 10 for CCI eligibility');
+  // DEMO: Lowered earnings threshold to 0
+  if (this.financialInfo.monthlyEarnings < 0) {  
+    throw new Error('Monthly earnings must be at least KSh 0 for CCI eligibility');
   }
   if (this.insuranceStatus.status !== 'NotApplied') {
     throw new Error('Insurance application already in progress or completed');
