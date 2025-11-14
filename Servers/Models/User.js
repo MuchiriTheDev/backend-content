@@ -1,4 +1,4 @@
-// User Schema (Updated: Removed auto-reject from pre-save; fraud check moved to controller)
+// User Schema (No changes needed, but included for completeness)
 import mongoose from 'mongoose';
 import logger from '../Utilities/Logger.js';
 // import bcrypt from 'bcryptjs';  // Uncomment if fallback auth needed

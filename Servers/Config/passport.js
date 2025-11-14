@@ -2,6 +2,7 @@ import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
+import { CastError } from 'mongoose'; // Add this import for handling CastError
 import User from '../Models/User.js';
 import Analytics from '../Models/Analytics.js';
 
@@ -204,7 +205,23 @@ passport.use(new GoogleStrategy({
     try {
       await analytics.updateFromYouTube(accessToken);
     } catch (err) {
-      if (err.response?.status === 401 || err.response?.status === 403) {
+      if (err.name === 'CastError') {
+        console.warn('CastError in analytics update (likely NaN in dropPercent): Cleaning NaN values and retrying save');
+        // Clean NaN values in earningsHistory
+        if (analytics.youtube && analytics.youtube.metrics && analytics.youtube.metrics.earningsHistory) {
+          analytics.youtube.metrics.earningsHistory.forEach((entry) => {
+            if (entry.dropPercent !== undefined && isNaN(entry.dropPercent)) {
+              entry.dropPercent = 0;
+            }
+          });
+        }
+        // Optionally clean other potential NaN fields if known (e.g., growthPercent, etc.)
+        // For example:
+        // if (analytics.youtube.metrics.growthPercent !== undefined && isNaN(analytics.youtube.metrics.growthPercent)) {
+        //   analytics.youtube.metrics.growthPercent = 0;
+        // }
+        await analytics.save();
+      } else if (err.response?.status === 401 || err.response?.status === 403) {
         console.warn('Analytics scopes limited: Using fallback estimates');
         // Fallback calc (align Analytics method)
         const { viewCount, videoCount } = user.platformInfo.youtube.channel;
@@ -214,6 +231,16 @@ passport.use(new GoogleStrategy({
         analytics.youtube.metrics.estimateMonthlyEarnings = dailyEarnings * 30;
         analytics.youtube.metrics.avgDailyRevenue90d = dailyEarnings;
         analytics.youtube.metrics.watchHours90d = 0;  // Stub
+        // Ensure earningsHistory is initialized without NaN if needed
+        if (!analytics.youtube.metrics.earningsHistory) {
+          analytics.youtube.metrics.earningsHistory = [];
+        } else {
+          analytics.youtube.metrics.earningsHistory.forEach((entry) => {
+            if (entry.dropPercent !== undefined && isNaN(entry.dropPercent)) {
+              entry.dropPercent = 0;
+            }
+          });
+        }
         await analytics.save();
       } else {
         throw err;
